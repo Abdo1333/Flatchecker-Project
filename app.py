@@ -17,13 +17,11 @@ def generate_pdf():
         pdf_url = data["url"]
         json_pieces = data["pieces"]
 
-        # Télécharger le PDF
         pdf_path = "input.pdf"
         response = requests.get(pdf_url)
         with open(pdf_path, "wb") as f:
             f.write(response.content)
 
-        # Extraction des images
         def extraire_images_par_page(pdf_path):
             doc = fitz.open(pdf_path)
             images_par_page = {}
@@ -41,7 +39,6 @@ def generate_pdf():
 
         images_par_page = extraire_images_par_page(pdf_path)
 
-        # Générer le PDF
         output_pdf_path = "static/output.pdf"
         os.makedirs("static", exist_ok=True)
 
@@ -83,7 +80,6 @@ def generate_pdf():
 
         doc.build(elements)
 
-        # URL publique (ex : https://tonapp.onrender.com/static/output.pdf)
         public_url = request.host_url + "static/output.pdf"
 
         return jsonify({
