@@ -1,4 +1,5 @@
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 import fitz  
 import requests
 from PIL import Image
@@ -9,6 +10,7 @@ from reportlab.lib.styles import getSampleStyleSheet
 import os
 
 app = Flask(__name__)
+CORS(app)
 
 @app.route("/generate-pdf", methods=["POST"])
 def generate_pdf():

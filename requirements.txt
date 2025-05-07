@@ -3,3 +3,4 @@ pymupdf
 Pillow
 reportlab
 requests
+flask-cors
