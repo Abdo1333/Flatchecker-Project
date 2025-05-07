@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import fitz  
+import fitz  # PyMuPDF
 import requests
 from PIL import Image
 from io import BytesIO
@@ -8,6 +8,7 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image as RL
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet
 import os
+import traceback
 
 app = Flask(__name__)
 CORS(app)
@@ -15,15 +16,25 @@ CORS(app)
 @app.route("/generate-pdf", methods=["POST"])
 def generate_pdf():
     try:
+        # Lecture du body JSON
         data = request.get_json()
-        pdf_url = data["url"]
-        json_pieces = data["pieces"]
+        if not data:
+            raise ValueError("Le corps de la requête est vide ou mal formaté.")
+        
+        pdf_url = data.get("url")
+        json_pieces = data.get("pieces")
 
+        if not pdf_url or not json_pieces:
+            raise ValueError("Le champ 'url' ou 'pieces' est manquant.")
+
+        # Téléchargement du PDF
         pdf_path = "input.pdf"
         response = requests.get(pdf_url)
+        response.raise_for_status()
         with open(pdf_path, "wb") as f:
             f.write(response.content)
 
+        # Fonction d'extraction des images
         def extraire_images_par_page(pdf_path):
             doc = fitz.open(pdf_path)
             images_par_page = {}
@@ -41,6 +52,7 @@ def generate_pdf():
 
         images_par_page = extraire_images_par_page(pdf_path)
 
+        # Génération du nouveau PDF
         output_pdf_path = "static/output.pdf"
         os.makedirs("static", exist_ok=True)
 
@@ -53,8 +65,8 @@ def generate_pdf():
         total_images = 0
 
         for piece, infos in json_pieces.items():
-            description = infos["description"]
-            pages = infos["pages"]
+            description = infos.get("description", "")
+            pages = infos.get("pages", {})
 
             elements.append(Paragraph(f"<b>{piece.capitalize()}</b>", styles["Title"]))
             elements.append(Spacer(1, 6))
@@ -82,7 +94,8 @@ def generate_pdf():
 
         doc.build(elements)
 
-        public_url = request.host_url + "static/output.pdf"
+        # URL publique vers le PDF généré
+        public_url = request.host_url.rstrip("/") + "/static/output.pdf"
 
         return jsonify({
             "status": "success",
@@ -91,10 +104,13 @@ def generate_pdf():
         })
 
     except Exception as e:
-        print(f"Erreur : {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+        traceback.print_exc()
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500
+
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5001))
+    port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
-
