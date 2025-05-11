@@ -1,40 +1,122 @@
 from flask import Flask, request, jsonify
-from flask_cors import CORS
-import fitz  # PyMuPDF
+import fitz
 import requests
+import os
+import io
 from PIL import Image
-from io import BytesIO
+import imagehash
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image as RLImage, PageBreak
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet
-import os
-import traceback
+import matplotlib.pyplot as plt
 
 app = Flask(__name__)
-CORS(app)
+
+
+def extraire_images_avec_infos(pdf_path):
+    doc = fitz.open(pdf_path)
+    images_info = []
+
+    for page_index in range(len(doc)):
+        page = doc[page_index]
+        for img_index, img in enumerate(page.get_images(full=True)):
+            xref = img[0]
+            base_image = doc.extract_image(xref)
+            image_bytes = base_image["image"]
+            pil_image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+            img_hash = imagehash.phash(pil_image)
+            images_info.append({
+                "page_index": page_index,
+                "xref": xref,
+                "hash": img_hash,
+                "image": pil_image
+            })
+    return doc, images_info
+
+
+def detecter_logos(images_info, seuil_repetition=2):
+    hash_counts = {}
+    for info in images_info:
+        h = str(info["hash"])
+        hash_counts[h] = hash_counts.get(h, 0) + 1
+    return {h for h, count in hash_counts.items() if count >= seuil_repetition}
+
+
+def supprimer_logos(doc, images_info, logos_detectes):
+    for info in images_info:
+        if str(info["hash"]) in logos_detectes:
+            doc[info["page_index"]].delete_image(info["xref"])
+    return doc
+
+
+def extraire_images_vers_pdf(source_pdf, output_pdf):
+    doc = fitz.open(source_pdf)
+    images = []
+
+    for page_index in range(len(doc)):
+        page = doc[page_index]
+        for img_index, img in enumerate(page.get_images(full=True)):
+            xref = img[0]
+            base_image = doc.extract_image(xref)
+            image_bytes = base_image["image"]
+            pil_image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+            images.append(pil_image)
+
+    if images:
+        pdf_images = [img.convert("RGB") for img in images]
+        pdf_images[0].save(output_pdf, save_all=True, append_images=pdf_images[1:])
+        return len(images)
+    return 0
+
+
+@app.route("/remove-logos", methods=["POST"])
+def remove_logos():
+    print(">>> /remove-logos endpoint hit")
+    try:
+        data = request.get_json()
+        pdf_url = data["url"]
+
+        input_pdf = "input.pdf"
+        response = requests.get(pdf_url)
+        with open(input_pdf, "wb") as f:
+            f.write(response.content)
+
+        output_pdf = "static/pdf-sans-logos.pdf"
+        os.makedirs("static", exist_ok=True)
+
+        doc, images_info = extraire_images_avec_infos(input_pdf)
+        logos = detecter_logos(images_info)
+        doc = supprimer_logos(doc, images_info, logos)
+        doc.save(output_pdf)
+
+        extracted_pdf = "static/extrait-images.pdf"
+        images_extracted = extraire_images_vers_pdf(output_pdf, extracted_pdf)
+
+        return jsonify({
+            "status": "success",
+            "logos_detected": len(logos),
+            "clean_pdf": request.host_url + "static/pdf-sans-logos.pdf",
+            "images_pdf": request.host_url + "static/extrait-images.pdf",
+            "images_extracted": images_extracted
+        })
+
+    except Exception as e:
+        print(f"Erreur : {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
 
 @app.route("/generate-pdf", methods=["POST"])
 def generate_pdf():
     try:
-        # Lecture du body JSON
         data = request.get_json()
-        if not data:
-            raise ValueError("Le corps de la requête est vide ou mal formaté.")
-        
-        pdf_url = data.get("url")
-        json_pieces = data.get("pieces")
+        pdf_url = data["url"]
+        json_pieces = data["pieces"]
 
-        if not pdf_url or not json_pieces:
-            raise ValueError("Le champ 'url' ou 'pieces' est manquant.")
-
-        # Téléchargement du PDF
         pdf_path = "input.pdf"
         response = requests.get(pdf_url)
-        response.raise_for_status()
         with open(pdf_path, "wb") as f:
             f.write(response.content)
 
-        # Fonction d'extraction des images
         def extraire_images_par_page(pdf_path):
             doc = fitz.open(pdf_path)
             images_par_page = {}
@@ -52,7 +134,6 @@ def generate_pdf():
 
         images_par_page = extraire_images_par_page(pdf_path)
 
-        # Génération du nouveau PDF
         output_pdf_path = "static/output.pdf"
         os.makedirs("static", exist_ok=True)
 
@@ -65,8 +146,8 @@ def generate_pdf():
         total_images = 0
 
         for piece, infos in json_pieces.items():
-            description = infos.get("description", "")
-            pages = infos.get("pages", {})
+            description = infos["description"]
+            pages = infos["pages"]
 
             elements.append(Paragraph(f"<b>{piece.capitalize()}</b>", styles["Title"]))
             elements.append(Spacer(1, 6))
@@ -94,8 +175,7 @@ def generate_pdf():
 
         doc.build(elements)
 
-        # URL publique vers le PDF généré
-        public_url = request.host_url.rstrip("/") + "/static/output.pdf"
+        public_url = request.host_url + "static/output.pdf"
 
         return jsonify({
             "status": "success",
@@ -104,13 +184,10 @@ def generate_pdf():
         })
 
     except Exception as e:
-        traceback.print_exc()
-        return jsonify({
-            "status": "error",
-            "message": str(e)
-        }), 500
+        print(f"Erreur : {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
+    port = int(os.environ.get("PORT", 5001))
     app.run(host="0.0.0.0", port=port)
