@@ -1,6 +1,9 @@
 Flask
+flask-cors
 pymupdf
 Pillow
 reportlab
 requests
-flask-cors
+ImageHash
+matplotlib
+imagehash
